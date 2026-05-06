@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Env
+.env
+
+# Data — don't commit PDFs or DB
+data/raw/*
+!data/raw/.gitkeep
+data/processed/
+
+# IDE
+.vscode/
+.idea/
+
+# Eval results — keep structure, ignore generated reports for now
+evals/results/*
+!evals/results/.gitkeep
+
+# OS
+.DS_Store

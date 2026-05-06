@@ -1,6 +1,7 @@
 import pdfplumber
-from typing import List, Dict
 from pathlib import Path
+from typing import List, Dict
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
 def parse_metadata(file_path: Path):
@@ -24,11 +25,18 @@ def parse_metadata(file_path: Path):
 
 def get_chunks_from_pdf(file_path: Path, metadata: Dict) -> List[Dict]:
     """
-    Extracts text from PDF and returns a list of chunk objects with metadata.
+    Extracts text from PDF and uses LangChain to create
+    semantic chunks while preserving page numbers.
     """
     chunks = []
-    chunk_size = 800
-    chunk_overlap = 100
+
+    # RecursiveCharacterTextSplitter tries to split at natural boundaries
+    # (newlines, then periods, then spaces) to keep thoughts together.
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=800,
+        chunk_overlap=100,
+        length_function=len,
+    )
 
     with pdfplumber.open(file_path) as pdf:
         for page in pdf.pages:
@@ -36,37 +44,29 @@ def get_chunks_from_pdf(file_path: Path, metadata: Dict) -> List[Dict]:
             if not text:
                 continue
 
-            # Simple sliding window chunking
-            start = 0
-            while start < len(text):
-                end = start + chunk_size
-                chunk_text = text[start:end]
+            # Split the text of the CURRENT page only
+            page_texts = text_splitter.split_text(text)
 
+            for t in page_texts:
                 chunks.append(
                     {
                         "company": metadata["company"],
                         "fy": metadata["fy"],
                         "quarter": metadata["quarter"],
                         "page_number": page.page_number,
-                        "content": chunk_text
+                        "content": t
                     }
                 )
-
-                # Move window forward by (size - overlap)
-                start += (chunk_size - chunk_overlap)
-
-                # If the remaining text is very small, just stop
-                if len(text) - start < chunk_overlap:
-                    break
 
     return chunks
 
 
-# Test it out
+# Keep your __main__ test block to verify the new logic
 if __name__ == "__main__":
-    test_path = Path("data/raw/transcripts/HDFC_Bank_FY25_Q4.pdf")
+    test_path = Path("data/raw/transcripts/HDFC_Bank_FY26_Q1.pdf")
     if test_path.exists():
+        # Re-use your parse_metadata from earlier
         meta = parse_metadata(test_path)
         sample_chunks = get_chunks_from_pdf(test_path, meta)
-        print(f"✅ Extracted {len(sample_chunks)} chunks from {test_path.name}")
-        print(f"First chunk sample: {sample_chunks[0]['content'][:100]}...")
+        print(f"✅ Extracted {len(sample_chunks)} semantic chunks.")
+        pass

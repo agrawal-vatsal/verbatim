@@ -1,8 +1,16 @@
+import os
+
 import pdfplumber
 from pathlib import Path
 from typing import List, Dict
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from dotenv import load_dotenv
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from openai import OpenAI
+
+from verbatim.db import Database
+
+load_dotenv()
 
 def parse_metadata(file_path: Path):
     """
@@ -60,13 +68,42 @@ def get_chunks_from_pdf(file_path: Path, metadata: Dict) -> List[Dict]:
 
     return chunks
 
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+def get_embeddings(texts: List[str]) -> List[List[float]]:
+    """
+    Sends a list of strings to OpenAI and returns a list of 1536-dim vectors.
+    """
+    response = client.embeddings.create(
+        input=texts,
+        model="text-embedding-3-small"
+    )
+    # Extract the vectors from the response object
+    return [e.embedding for e in response.data]
+
 
 # Keep your __main__ test block to verify the new logic
 if __name__ == "__main__":
-    test_path = Path("data/raw/transcripts/HDFC_Bank_FY26_Q1.pdf")
-    if test_path.exists():
-        # Re-use your parse_metadata from earlier
-        meta = parse_metadata(test_path)
-        sample_chunks = get_chunks_from_pdf(test_path, meta)
-        print(f"✅ Extracted {len(sample_chunks)} semantic chunks.")
-        pass
+    db = Database()
+    # Using your existing sample file
+    pdf_path = Path("data/raw/transcripts/HDFC_Bank_FY25_Q3.pdf")
+
+    if pdf_path.exists():
+        print(f"🚀 Smoke testing ingestion for {pdf_path.name}...")
+
+        meta = parse_metadata(pdf_path)
+        all_chunks = get_chunks_from_pdf(pdf_path, meta)
+
+        # --- THE SMOKE TEST SLICE ---
+        # Only take the first 3 chunks to save costs
+        test_chunks = all_chunks[:3]
+        print(f"📦 Selected {len(test_chunks)} chunks for testing.")
+
+        # 4. Generate Embeddings (only for these 3)
+        texts = [c["content"] for c in test_chunks]
+        print("🧠 Calling OpenAI for embeddings...")
+        embeddings = get_embeddings(texts)
+
+        # 5. Save to DB
+        count = db.insert_transcript_chunks(test_chunks, embeddings)
+        print(f"🏁 Successfully stored {count} test chunks in the database.")

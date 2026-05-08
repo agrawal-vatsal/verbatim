@@ -60,12 +60,14 @@ class ChatManager:
 
     @track_latency
     def _retrieve(self, extracted: Dict) -> List[Dict]:
-        """Phase 2: Hybrid retrieval using Weighted RRF logic."""
+        """
+        Executes hybrid search and calculates the retrieval signal distribution
+        (Overlap vs Vector-only vs Keyword-only).
+        """
         search_query = extracted.get("search_query")
-        # Vectorize the optimized query
         query_vector = get_embeddings([search_query])[0]
 
-        return self.db.search_hybrid_rrf(
+        chunks = self.db.search_hybrid_rrf(
             query_text=search_query,
             query_embedding=query_vector,
             company=extracted["company"],
@@ -77,16 +79,34 @@ class ChatManager:
             final_limit=self.FINAL_LIMIT
         )
 
+        # Calculate Retrieval Stats
+        if chunks:
+            overlap = [c for c in chunks if c['found_by_vector'] and c['found_by_keyword']]
+            pure_v = [c for c in chunks if c['found_by_vector'] and not c['found_by_keyword']]
+            pure_k = [c for c in chunks if c['found_by_keyword'] and not c['found_by_vector']]
+
+            self.search_stats = {
+                "overlap_count": len(overlap),
+                "vector_signal": len(pure_v),
+                "keyword_signal": len(pure_k)
+            }
+        else:
+            self.search_stats = {"overlap_count": 0, "vector_signal": 0, "keyword_signal": 0}
+
+        return chunks
+
     @track_latency
     def _synthesize(self, user_input: str, chunks: List[Dict]) -> str:
         """Phase 3: Context-aware answer generation."""
         return self.synthesizer.generate_answer(user_input, chunks)
 
     def _log_interaction(self, question: str, extracted: Dict, chunks: List[Dict]):
-        """Captures telemetry and persists it to the database."""
-        # Summing all recorded decorator timings
-        total_response_time = sum(self.latencies.values())
+        """
+        Persists performance data and search mode distribution to the database.
+        """
+        total_time = sum(self.latencies.values())
 
+        # Pack the telemetry payload
         telemetry = {
             "question": question,
             "refined_query": extracted.get("search_query"),
@@ -94,11 +114,18 @@ class ChatManager:
             "fy_filter": extracted.get("fy"),
             "quarter_filter": extracted.get("quarter"),
             "top_distance": chunks[0].get('rrf_score') if chunks else None,
+            # Timing (from @track_latency decorator)
             "processing_time_ms": self.latencies.get('_extract', 0),
             "retrieval_time_ms": self.latencies.get('_retrieve', 0),
             "synthesis_time_ms": self.latencies.get('_synthesize', 0),
-            "response_time_ms": total_response_time
+            "response_time_ms": total_time,
+            # Search Distribution Signal
+            "search_overlap_count": self.search_stats.get("overlap_count", 0),
+            "vector_signal": self.search_stats.get("vector_signal", 0),
+            "keyword_signal": self.search_stats.get("keyword_signal", 0)
         }
+
+        # Save to Postgres
         self.db.log_query(telemetry)
 
     def _display_result(self, answer: str, extracted: Dict):

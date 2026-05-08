@@ -203,7 +203,7 @@ class Database:
             weight_vec: float = 0.7,  # Importance of semantic search
             weight_kw: float = 0.3,  # Importance of keyword search
             final_limit: int = 5  # Chunks sent to the synthesizer
-    ) -> list:
+    ) -> List[Dict]:
         """
         Performs Weighted Reciprocal Rank Fusion using dynamic parameters.
         """
@@ -228,6 +228,8 @@ class Database:
         )
         SELECT 
             c.content, c.company, c.fy, c.quarter, c.page_number,
+            (v.id is not null) as found_by_vector,
+            (k.id is not null) as found_by_keyword,
             ((%s * COALESCE((1.0 / (60 + v.rank)), 0)) + 
              (%s * COALESCE((1.0 / (60 + k.rank)), 0))) as rrf_score
         FROM transcript_chunks c

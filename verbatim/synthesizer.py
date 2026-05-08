@@ -24,7 +24,7 @@ class Synthesizer:
         # Format the DB chunks into a single string for the prompt
         context_text = "\n\n".join(
             [
-                f"Source: {c['metadata']}\nContent: {c['content']}"
+                f"Source: {c['company']} | {c['fy']} {c['quarter']} | Page {c['page_number']}\nContent: {c['content']}"
                 for c in chunks
             ]
         )

@@ -209,20 +209,20 @@ class Database:
         """
         sql = """
         WITH vector_search AS (
-            SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> %s) as rank
+            SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> %s::vector) as rank
             FROM transcript_chunks
-            WHERE company = %s 
-              AND (%s IS NULL OR fy = %s)
-              AND (%s IS NULL OR quarter = %s)
-            ORDER BY embedding <=> %s
+            WHERE company = %s
+              AND (%s::text IS NULL OR fy = %s::text)
+              AND (%s::text IS NULL OR quarter = %s::text)
+            ORDER BY embedding <=> %s::vector
             LIMIT %s
         ),
         keyword_search AS (
             SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(fts_tokens, websearch_to_tsquery('english', %s)) DESC) as rank
             FROM transcript_chunks
             WHERE company = %s
-              AND (%s IS NULL OR fy = %s)
-              AND (%s IS NULL OR quarter = %s)
+              AND (%s::text IS NULL OR fy = %s::text)
+              AND (%s::text IS NULL OR quarter = %s::text)
               AND fts_tokens @@ websearch_to_tsquery('english', %s)
             LIMIT %s
         )

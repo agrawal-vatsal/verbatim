@@ -1,108 +1,151 @@
 import time
-from typing import Dict, List, Optional, Tuple
+import functools
+from typing import Dict, List, Optional
 from verbatim.db import Database
 from verbatim.processor import QueryProcessor
 from verbatim.synthesizer import Synthesizer
 from scripts.ingest_data import get_embeddings
 
 
+def track_latency(func):
+    """
+    Decorator that measures execution time in milliseconds
+    and stores it in the instance's 'latencies' dictionary.
+    """
+
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        start_time = time.time()
+        result = func(self, *args, **kwargs)
+        # Store duration using the function name as the key
+        self.latencies[func.__name__] = int((time.time() - start_time) * 1000)
+        return result
+
+    return wrapper
+
+
 class ChatManager:
+    # ---------------------------------------------------------
+    # Retrieval Configuration
+    # ---------------------------------------------------------
+    K_LIMIT = 20  # Number of candidates per search engine
+    WEIGHT_VEC = 0.7  # Weight for Vector Search (Semantic)
+    WEIGHT_KW = 0.3  # Weight for BM25 Search (Keyword)
+    FINAL_LIMIT = 5  # Number of chunks passed to the LLM
+
+    # ---------------------------------------------------------
+
     def __init__(self):
         self.db = Database()
         self.processor = QueryProcessor(self.db)
         self.synthesizer = Synthesizer()
+        self.latencies = {}  # State storage for the decorator
+
+    @track_latency
+    def _extract(self, user_input: str) -> Optional[Dict]:
+        """Phase 1: Metadata extraction and query rewriting."""
+        extracted = self.processor.process_query(user_input)
+
+        # Validation Guardrails
+        if not extracted.get("company") or extracted["company"] == "null":
+            companies = ", ".join(self.db.get_unique_companies())
+            print(f"❌ Error: Please specify a company. Available: {companies}")
+            return None
+
+        if extracted.get("quarter") and not extracted.get("fy"):
+            print("❌ Error: Financial Year (FY) is required when searching a specific Quarter.")
+            return None
+
+        return extracted
+
+    @track_latency
+    def _retrieve(self, extracted: Dict) -> List[Dict]:
+        """Phase 2: Hybrid retrieval using Weighted RRF logic."""
+        search_query = extracted.get("search_query")
+        # Vectorize the optimized query
+        query_vector = get_embeddings([search_query])[0]
+
+        return self.db.search_hybrid_rrf(
+            query_text=search_query,
+            query_embedding=query_vector,
+            company=extracted["company"],
+            fy=extracted.get("fy"),
+            quarter=extracted.get("quarter"),
+            k_limit=self.K_LIMIT,
+            weight_vec=self.WEIGHT_VEC,
+            weight_kw=self.WEIGHT_KW,
+            final_limit=self.FINAL_LIMIT
+        )
+
+    @track_latency
+    def _synthesize(self, user_input: str, chunks: List[Dict]) -> str:
+        """Phase 3: Context-aware answer generation."""
+        return self.synthesizer.generate_answer(user_input, chunks)
+
+    def _log_interaction(self, question: str, extracted: Dict, chunks: List[Dict]):
+        """Captures telemetry and persists it to the database."""
+        # Summing all recorded decorator timings
+        total_response_time = sum(self.latencies.values())
+
+        telemetry = {
+            "question": question,
+            "refined_query": extracted.get("search_query"),
+            "company_filter": extracted.get("company"),
+            "fy_filter": extracted.get("fy"),
+            "quarter_filter": extracted.get("quarter"),
+            "top_distance": chunks[0].get('rrf_score') if chunks else None,
+            "processing_time_ms": self.latencies.get('_extract', 0),
+            "retrieval_time_ms": self.latencies.get('_retrieve', 0),
+            "synthesis_time_ms": self.latencies.get('_synthesize', 0),
+            "response_time_ms": total_response_time
+        }
+        self.db.log_query(telemetry)
+
+    def _display_result(self, answer: str, extracted: Dict):
+        """Formats the final output for the console."""
+        metadata = f" {extracted['company']} | {extracted.get('fy', 'All Years')} "
+        print(f"\n{metadata.center(60, '=')}")
+        print(answer)
+        print("=" * 60 + "\n")
 
     def run_pipeline(self, user_input: str):
-        """Orchestrates the RAG phases and logs results."""
+        """Main orchestrator for the RAG pipeline flow."""
+        self.latencies = {}  # Clear latencies for the new request
 
-        # 1. Extraction Phase
-        extracted, p_time = self._timed_step(self.processor.process_query, user_input)
+        # 1. Extraction
+        extracted = self._extract(user_input)
+        if not extracted: return
 
-        # 2. Validation / Guardrails
-        if not self._validate_extraction(extracted):
-            return
-
-        # 3. Retrieval Phase
-        chunks, r_time = self._timed_step(self._perform_retrieval, extracted)
-
+        # 2. Retrieval
+        chunks = self._retrieve(extracted)
         if not chunks:
-            print("❌ No relevant data found for those filters.")
+            print("⚠️ No relevant documents found for the given parameters.")
             return
 
-        # 4. Synthesis Phase
-        answer, s_time = self._timed_step(self.synthesizer.generate_answer, user_input, chunks)
+        # 3. Synthesis
+        answer = self._synthesize(user_input, chunks)
 
-        # 5. Observability / Logging
-        self._log_interaction(user_input, extracted, chunks, p_time, r_time, s_time)
+        # 4. Telemetry & Display
+        self._log_interaction(user_input, extracted, chunks)
+        self._display_result(answer, extracted)
 
-        # 6. Final Output
-        self._print_response(answer, extracted)
 
-    def _timed_step(self, func, *args, **kwargs) -> Tuple[any, int]:
-        """Utility to measure execution time of any method in ms."""
-        start = time.time()
-        result = func(*args, **kwargs)
-        duration = int((time.time() - start) * 1000)
-        return result, duration
-
-    def _validate_extraction(self, extracted: Dict) -> bool:
-        """Handles logic-gate guardrails."""
-        company = extracted.get("company")
-        fy = extracted.get("fy")
-        quarter = extracted.get("quarter")
-
-        if not company or company == "null":
-            valid = ", ".join(self.db.get_unique_companies())
-            print(f"❌ ERROR: Please specify a company. Available: {valid}")
-            return False
-
-        if quarter and not fy:
-            print(f"❌ ERROR: I need the Financial Year to look up {quarter} data.")
-            return False
-
-        return True
-
-    def _perform_retrieval(self, extracted: Dict) -> List[Dict]:
-        """Handles vectorization and DB search."""
-        query_vector = get_embeddings([extracted.get("search_query")])[0]
-        return self.db.search_similar_chunks(
-            query_vector,
-            limit=5,
-            company=extracted.get("company"),
-            fy=extracted.get("fy"),
-            quarter=extracted.get("quarter")
-        )
-
-    def _log_interaction(self, question, extracted, chunks, p_time, r_time, s_time):
-        """Bundles telemetry and sends to DB."""
-        self.db.log_query(
-            {
-                "question": question,
-                "refined_query": extracted.get("search_query"),
-                "company_filter": extracted.get("company"),
-                "fy_filter": extracted.get("fy"),
-                "quarter_filter": extracted.get("quarter"),
-                "top_distance": chunks[0]['distance'] if chunks else None,
-                "processing_time_ms": p_time,
-                "retrieval_time_ms": r_time,
-                "synthesis_time_ms": s_time,
-                "response_time_ms": p_time + r_time + s_time
-            }
-        )
-
-    def _print_response(self, answer: str, extracted: Dict):
-        """Clean UI for the final result."""
-        ctx = f"{extracted['company']} | {extracted.get('fy', 'All Years')}"
-        print(f"\n{'=' * 10} ANSWER ({ctx}) {'=' * 10}")
-        print(answer)
-        print(f"{'=' * 40}\n")
-
+# --- Entry Point ---
 
 def main():
     manager = ChatManager()
-    user_input = input("💬 Ask Verbatim: ")
-    if user_input.strip():
-        manager.run_pipeline(user_input)
+    print("🏦 Verbatim Financial Intelligence Engine | 2026")
+    print("Type 'exit' to quit.\n")
+
+    while True:
+        try:
+            prompt = input("💬 Ask about a company: ").strip()
+            if prompt.lower() in ['exit', 'quit']:
+                break
+            if prompt:
+                manager.run_pipeline(prompt)
+        except KeyboardInterrupt:
+            break
 
 
 if __name__ == "__main__":

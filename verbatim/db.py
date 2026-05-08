@@ -3,6 +3,7 @@ import psycopg
 from typing import List, Dict
 from dotenv import load_dotenv
 from pgvector.psycopg import register_vector
+from psycopg.rows import dict_row
 
 load_dotenv()
 
@@ -190,3 +191,64 @@ class Database:
                     "p95": float(row[10] or 0)
                 }
         return stats
+
+    def search_hybrid_rrf(
+            self,
+            query_text: str,
+            query_embedding: list,
+            company: str,
+            fy: str = None,
+            quarter: str = None,
+            k_limit: int = 20,  # The candidate funnel size
+            weight_vec: float = 0.7,  # Importance of semantic search
+            weight_kw: float = 0.3,  # Importance of keyword search
+            final_limit: int = 5  # Chunks sent to the synthesizer
+    ) -> list:
+        """
+        Performs Weighted Reciprocal Rank Fusion using dynamic parameters.
+        """
+        sql = """
+        WITH vector_search AS (
+            SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> %s) as rank
+            FROM transcript_chunks
+            WHERE company = %s 
+              AND (%s IS NULL OR fy = %s)
+              AND (%s IS NULL OR quarter = %s)
+            ORDER BY embedding <=> %s
+            LIMIT %s
+        ),
+        keyword_search AS (
+            SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(fts_tokens, websearch_to_tsquery('english', %s)) DESC) as rank
+            FROM transcript_chunks
+            WHERE company = %s
+              AND (%s IS NULL OR fy = %s)
+              AND (%s IS NULL OR quarter = %s)
+              AND fts_tokens @@ websearch_to_tsquery('english', %s)
+            LIMIT %s
+        )
+        SELECT 
+            c.content, c.company, c.fy, c.quarter, c.page_number,
+            ((%s * COALESCE((1.0 / (60 + v.rank)), 0)) + 
+             (%s * COALESCE((1.0 / (60 + k.rank)), 0))) as rrf_score
+        FROM transcript_chunks c
+        LEFT JOIN vector_search v ON c.id = v.id
+        LEFT JOIN keyword_search k ON c.id = k.id
+        WHERE v.id IS NOT NULL OR k.id IS NOT NULL
+        ORDER BY rrf_score DESC
+        LIMIT %s;
+        """
+
+        # Mapping parameters to the SQL placeholders
+        params = (
+            # Vector CTE
+            query_embedding, company, fy, fy, quarter, quarter, query_embedding, k_limit,
+            # Keyword CTE
+            query_text, company, fy, fy, quarter, quarter, query_text, k_limit,
+            # Final Select & Fusion
+            weight_vec, weight_kw, final_limit
+        )
+
+        with self._get_connection() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql, params)
+                return cur.fetchall()

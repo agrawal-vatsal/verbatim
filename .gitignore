@@ -28,3 +28,6 @@ evals/results/*
 .code-review-graph/
 
 .ai/
+.claude/
+.mcp.json
+CLAUDE.md

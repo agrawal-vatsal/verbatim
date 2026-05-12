@@ -1,48 +1,50 @@
 import time
 import functools
-from typing import Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, TypeVar, cast
 from verbatim.db import Database
 from verbatim.processor import QueryProcessor
 from verbatim.synthesizer import Synthesizer
 from scripts.ingest_data import get_embeddings
 
+F = TypeVar('F', bound=Callable[..., Any])
 
-def track_latency(func):
+
+def track_latency(func: F) -> F:
     """
     Decorator that measures execution time in milliseconds
     and stores it in the instance's 'latencies' dictionary.
     """
 
     @functools.wraps(func)
-    def wrapper(self, *args, **kwargs):
+    def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
         start_time = time.time()
         result = func(self, *args, **kwargs)
-        # Store duration using the function name as the key
         self.latencies[func.__name__] = int((time.time() - start_time) * 1000)
         return result
 
-    return wrapper
+    return cast(F, wrapper)
 
 
 class ChatManager:
     # ---------------------------------------------------------
     # Retrieval Configuration
     # ---------------------------------------------------------
-    K_LIMIT = 20  # Number of candidates per search engine
-    WEIGHT_VEC = 0.7  # Weight for Vector Search (Semantic)
-    WEIGHT_KW = 0.3  # Weight for BM25 Search (Keyword)
-    FINAL_LIMIT = 5  # Number of chunks passed to the LLM
+    K_LIMIT = 20
+    WEIGHT_VEC = 0.7
+    WEIGHT_KW = 0.3
+    FINAL_LIMIT = 5
 
     # ---------------------------------------------------------
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.db = Database()
         self.processor = QueryProcessor(self.db)
         self.synthesizer = Synthesizer()
-        self.latencies = {}  # State storage for the decorator
+        self.latencies: dict[str, int] = {}  # State storage for the decorator
+        self.search_stats: dict[str, int] = {}
 
     @track_latency
-    def _extract(self, user_input: str) -> Optional[Dict]:
+    def _extract(self, user_input: str) -> Optional[Dict[str, Any]]:
         """Phase 1: Metadata extraction and query rewriting."""
         extracted = self.processor.process_query(user_input)
 
@@ -59,12 +61,12 @@ class ChatManager:
         return extracted
 
     @track_latency
-    def _retrieve(self, extracted: Dict) -> List[Dict]:
+    def _retrieve(self, extracted: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Executes hybrid search and calculates the retrieval signal distribution
         (Overlap vs Vector-only vs Keyword-only).
         """
-        search_query = extracted.get("search_query")
+        search_query: str = cast(str, extracted.get("search_query", ""))
         query_vector = get_embeddings([search_query])[0]
 
         chunks = self.db.search_hybrid_rrf(
@@ -96,18 +98,16 @@ class ChatManager:
         return chunks
 
     @track_latency
-    def _synthesize(self, user_input: str, chunks: List[Dict]) -> str:
+    def _synthesize(self, user_input: str, chunks: List[Dict[str, Any]]) -> str:
         """Phase 3: Context-aware answer generation."""
         return self.synthesizer.generate_answer(user_input, chunks)
 
-    def _log_interaction(self, question: str, extracted: Dict, chunks: List[Dict]):
-        """
-        Persists performance data and search mode distribution to the database.
-        """
+    def _log_interaction(self, question: str, extracted: Dict[str, Any], chunks: List[Dict[str, Any]]) -> None:
+        """Persists performance data and search mode distribution to the database."""
         total_time = sum(self.latencies.values())
 
         # Pack the telemetry payload
-        telemetry = {
+        telemetry: dict[str, Any] = {
             "question": question,
             "refined_query": extracted.get("search_query"),
             "company_filter": extracted.get("company"),
@@ -128,20 +128,21 @@ class ChatManager:
         # Save to Postgres
         self.db.log_query(telemetry)
 
-    def _display_result(self, answer: str, extracted: Dict):
+    def _display_result(self, answer: str, extracted: Dict[str, Any]) -> None:
         """Formats the final output for the console."""
         metadata = f" {extracted['company']} | {extracted.get('fy', 'All Years')} "
         print(f"\n{metadata.center(60, '=')}")
         print(answer)
         print("=" * 60 + "\n")
 
-    def run_pipeline(self, user_input: str):
+    def run_pipeline(self, user_input: str) -> None:
         """Main orchestrator for the RAG pipeline flow."""
         self.latencies = {}  # Clear latencies for the new request
 
         # 1. Extraction
         extracted = self._extract(user_input)
-        if not extracted: return
+        if not extracted:
+            return
 
         # 2. Retrieval
         chunks = self._retrieve(extracted)
@@ -159,7 +160,7 @@ class ChatManager:
 
 # --- Entry Point ---
 
-def main():
+def main() -> None:
     manager = ChatManager()
     print("🏦 Verbatim Financial Intelligence Engine | 2026")
     print("Type 'exit' to quit.\n")

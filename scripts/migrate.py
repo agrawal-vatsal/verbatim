@@ -6,8 +6,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def run_migrations():
+def run_migrations() -> None:
     conn_str = os.getenv("DATABASE_URL")
+    assert conn_str is not None, "DATABASE_URL must be set"
     migration_dir = Path("migrations")
 
     # Get all .sql files and sort them to ensure 0001 runs before 0002

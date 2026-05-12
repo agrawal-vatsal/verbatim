@@ -42,8 +42,8 @@ class ChatManager:
     CANDIDATE_POOL: int = 20  # Funnel Phase 1
     FINAL_TOP_K: int = 5  # Funnel Phase 2
 
-    WEIGHT_VEC: float = 0.7
-    WEIGHT_KW: float = 0.3
+    WEIGHT_VEC: float = 1
+    WEIGHT_KW: float = 1
 
     # ---------------------------------------------------------
 
@@ -122,8 +122,9 @@ class ChatManager:
             question: str,
             extracted: Dict[str, Any],
             chunks: List[Dict[str, Any]],
-            pre_ce_ids: List[int],
-            post_ce_ids: List[int]
+            pre_ce_ids: List[str],
+            post_ce_ids: List[str],
+            displacement_score: float,
         ) -> None:
         """Phase 5: Telemetry Persistence."""
         total_time: int = sum(self.latencies.values())
@@ -148,8 +149,12 @@ class ChatManager:
             "keyword_signal": self.search_stats.get("keyword_only", 0),
             "pre_ce_chunk_ids": pre_ce_ids,
             "post_ce_chunk_ids": post_ce_ids,
+            "reranker_displacement": displacement_score,
         }
-        self.db.log_query(telemetry)
+        try:
+            self.db.log_query(telemetry)
+        except Exception as e:
+            print(f"⚠️ Telemetry logging failed: {e}")
 
     def _display_result(self, answer: str, extracted: Dict[str, Any]) -> None:
         """Phase 5: UI Output."""
@@ -182,7 +187,8 @@ class ChatManager:
 
         self._log_interaction(
             user_input, extracted, refined_chunks,
-            rerank_result["pre_ce_ids"], rerank_result["post_ce_ids"]
+            rerank_result["pre_ce_ids"], rerank_result["post_ce_ids"],
+            rerank_result["displacement_score"],
         )
         self._display_result(answer, extracted)
 

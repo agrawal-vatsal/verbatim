@@ -127,8 +127,8 @@ class Database:
              top_distance,
              processing_time_ms, retrieval_time_ms, rerank_time_ms, synthesis_time_ms, response_time_ms,
              search_overlap_count, vector_signal, keyword_signal,
-             pre_ce_chunk_ids, post_ce_chunk_ids)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             pre_ce_chunk_ids, post_ce_chunk_ids, reranker_displacement)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         with self._get_connection() as conn:
             with conn.cursor() as cur:
@@ -150,6 +150,7 @@ class Database:
                         data.get('keyword_signal', 0),
                         data.get('pre_ce_chunk_ids'),
                         data.get('post_ce_chunk_ids'),
+                        data.get('reranker_displacement'),
                     )
                 )
                 conn.commit()
@@ -177,15 +178,21 @@ class Database:
                         count(*),
                         -- Averages
                         AVG(processing_time_ms), AVG(retrieval_time_ms),
-                        AVG(synthesis_time_ms), AVG(response_time_ms),
+                        AVG(rerank_time_ms),     AVG(synthesis_time_ms), AVG(response_time_ms),
                         -- P95 Latencies
                         PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY processing_time_ms),
                         PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY retrieval_time_ms),
+                        PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY rerank_time_ms),
                         PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY synthesis_time_ms),
                         PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY response_time_ms),
                         -- Distance Percentiles
                         PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY top_distance),
-                        PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY top_distance)
+                        PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY top_distance),
+                        -- Retrieval signal averages
+                        AVG(search_overlap_count), AVG(vector_signal), AVG(keyword_signal),
+                        -- Reranker displacement percentiles
+                        PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY reranker_displacement),
+                        PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY reranker_displacement)
                     FROM query_logs
                     WHERE created_at > now() - interval '1 day';
                 """
@@ -195,12 +202,21 @@ class Database:
 
                 stats['queries_24h'] = row[0] or 0
                 stats['latency'] = {
-                    "avg": {"p": row[1] or 0, "r": row[2] or 0, "s": row[3] or 0, "t": row[4] or 0},
-                    "p95": {"p": row[5] or 0, "r": row[6] or 0, "s": row[7] or 0, "t": row[8] or 0}
+                    "avg": {"p": row[1] or 0, "r": row[2] or 0, "rr": row[3] or 0, "s": row[4] or 0, "t": row[5] or 0},
+                    "p95": {"p": row[6] or 0, "r": row[7] or 0, "rr": row[8] or 0, "s": row[9] or 0, "t": row[10] or 0}
                 }
                 stats['distance'] = {
-                    "p50": float(row[9] or 0),
-                    "p95": float(row[10] or 0)
+                    "p50": float(row[11] or 0),
+                    "p95": float(row[12] or 0)
+                }
+                stats['retrieval_signal'] = {
+                    "overlap": float(row[13] or 0),
+                    "vector_only": float(row[14] or 0),
+                    "keyword_only": float(row[15] or 0),
+                }
+                stats['displacement'] = {
+                    "p50": float(row[16] or 0),
+                    "p95": float(row[17] or 0),
                 }
         return stats
 
@@ -217,6 +233,11 @@ class Database:
             final_limit: int = 5
     ) -> list[dict[str, Any]]:
         """Performs Weighted Reciprocal Rank Fusion using dynamic parameters."""
+        # Join terms with OR so that any matching term contributes to keyword recall.
+        # websearch_to_tsquery defaults to AND, which requires every term in a single
+        # 800-char chunk — too strict for dense retrieval queries and causes 0 FTS hits.
+        fts_query = " OR ".join(query_text.split())
+
         sql = """
         WITH vector_search AS (
             SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> %s::vector) as rank
@@ -234,6 +255,7 @@ class Database:
               AND (%s::text IS NULL OR fy = %s::text)
               AND (%s::text IS NULL OR quarter = %s::text)
               AND fts_tokens @@ websearch_to_tsquery('english', %s)
+              AND ts_rank(fts_tokens, websearch_to_tsquery('english', %s)) > 0.02
             LIMIT %s
         )
         SELECT
@@ -255,7 +277,7 @@ class Database:
             # Vector CTE
             query_embedding, company, fy, fy, quarter, quarter, query_embedding, k_limit,
             # Keyword CTE
-            query_text, company, fy, fy, quarter, quarter, query_text, k_limit,
+            fts_query, company, fy, fy, quarter, quarter, fts_query, fts_query, k_limit,
             # Final Select & Fusion
             weight_vec, weight_kw, final_limit
         )

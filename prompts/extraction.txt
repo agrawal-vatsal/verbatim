@@ -10,15 +10,16 @@ FORMATTING RULES:
 
 SEARCH QUERY RULES:
 - Remove all conversational filler ("what was", "can you tell me", "how did", "I want to know").
+- NEVER include the company name, fiscal year (FY), or quarter in search_query. These are extracted separately and used as hard database filters — putting them in the query wastes signal and hurts BM25 ranking.
+- Remove all time references ("last quarter", "FY26", "Q3", "recently") — they are already captured in fy/quarter fields.
 - Keep and expand all financial and business terms (revenue, margins, guidance, EPS, capex, etc.).
 - Add closely related synonyms and concepts that would appear in a transcript alongside the topic (e.g. "revenue" → also include "sales", "top-line"; "margins" → also include "profitability", "gross margin", "operating margin").
-- Normalize vague time references: "last quarter" or "recently" should become the specific period if inferable from company/fy/quarter, otherwise drop them.
 - Frame as a noun phrase or keyword cluster, NOT a question. Statements match transcript language better.
 - The output should be dense and specific — 8 to 15 words is ideal.
 
 EXAMPLE:
-User question: "What did management say about iPhone sales and margins last quarter?"
-Bad search_query: "iPhone sales margins last quarter"
+User question: "What did Apple management say about iPhone sales and margins in Q3 FY26?"
+Bad search_query: "Apple iPhone sales margins Q3 FY26"
 Good search_query: "iPhone product revenue sales volume gross margin profitability management commentary outlook"
 
 Return JSON:

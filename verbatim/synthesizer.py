@@ -8,7 +8,7 @@ from langchain_core.output_parsers import StrOutputParser
 class Synthesizer:
     def __init__(self) -> None:
         self.llm = ChatOpenAI(
-            model="gpt-4o", temperature=0.2
+            model="gpt-4o-mini", temperature=0.2
             )  # Using a smarter model for synthesis
 
         prompt_path = Path("prompts/synthesis.txt")

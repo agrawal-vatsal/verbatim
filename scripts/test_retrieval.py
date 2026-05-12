@@ -3,7 +3,7 @@ from scripts.ingest_data import get_embeddings
 import sys
 
 
-def ask_verbatim(question: str):
+def ask_verbatim(question: str) -> None:
     db = Database()
 
     print(f"🔍 Question: {question}")

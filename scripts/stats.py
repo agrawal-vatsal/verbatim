@@ -1,7 +1,7 @@
 from verbatim.db import Database
 
 
-def display_stats():
+def display_stats() -> None:
     db = Database()
     s = db.get_system_stats()
     l = s['latency']

@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 
-def download_transcripts():
+def download_transcripts() -> None:
     transcript_dir = Path("data/raw/transcripts")
     transcript_dir.mkdir(parents=True, exist_ok=True)
 

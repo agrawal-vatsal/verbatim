@@ -2,7 +2,7 @@ import os
 
 import pdfplumber
 from pathlib import Path
-from typing import List, Dict
+from typing import Any, List, Dict
 
 from dotenv import load_dotenv
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -12,7 +12,7 @@ from verbatim.db import Database
 
 load_dotenv()
 
-def parse_metadata(file_path: Path):
+def parse_metadata(file_path: Path) -> dict[str, str]:
     """
     Extracts company, fy, and quarter from filename: Company_FYXX_QX.pdf
     """
@@ -31,7 +31,7 @@ def parse_metadata(file_path: Path):
     }
 
 
-def get_chunks_from_pdf(file_path: Path, metadata: Dict) -> List[Dict]:
+def get_chunks_from_pdf(file_path: Path, metadata: dict[str, str]) -> List[Dict[str, Any]]:
     """
     Extracts text from PDF and uses LangChain to create
     semantic chunks while preserving page numbers.

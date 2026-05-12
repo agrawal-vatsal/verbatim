@@ -31,3 +31,4 @@ evals/results/*
 .claude/
 .mcp.json
 CLAUDE.md
+.pre-commit-config.yaml

@@ -1,6 +1,6 @@
 import os
 import psycopg
-from typing import List, Dict
+from typing import Any, Optional, cast
 from dotenv import load_dotenv
 from pgvector.psycopg import register_vector
 from psycopg.rows import dict_row
@@ -9,16 +9,18 @@ load_dotenv()
 
 
 class Database:
-    def __init__(self):
-        self.conn_str = os.getenv("DATABASE_URL")
+    def __init__(self) -> None:
+        conn_str = os.getenv("DATABASE_URL")
+        if conn_str is None:
+            raise ValueError("DATABASE_URL environment variable is not set")
+        self.conn_str: str = conn_str
 
-    def _get_connection(self):
-        """Internal helper to get a connection and register the vector type."""
+    def _get_connection(self) -> psycopg.Connection[Any]:
         conn = psycopg.connect(self.conn_str)
         register_vector(conn)
         return conn
 
-    def insert_transcript_chunks(self, chunks: List[Dict], embeddings: List[List[float]]):
+    def insert_transcript_chunks(self, chunks: list[dict[str, Any]], embeddings: list[list[float]]) -> int:
         """Performs a high-speed batch insert using COPY."""
         with self._get_connection() as conn:
             with conn.cursor() as cur:
@@ -50,15 +52,15 @@ class Database:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT 1 FROM transcript_chunks 
-                    WHERE company = %s AND fy = %s AND quarter = %s 
+                    SELECT 1 FROM transcript_chunks
+                    WHERE company = %s AND fy = %s AND quarter = %s
                     LIMIT 1
                     """,
                     (company, fy, quarter)
                 )
                 return cur.fetchone() is not None
 
-    def get_unique_companies(self) -> List[str]:
+    def get_unique_companies(self) -> list[str]:
         """Returns a list of all company names present in the database."""
         with self._get_connection() as conn:
             with conn.cursor() as cur:
@@ -67,26 +69,24 @@ class Database:
 
     def search_similar_chunks(
         self,
-        query_embedding: List[float],
+        query_embedding: list[float],
         limit: int = 5,
-        company: str = None,
-        fy: str = None,
-        quarter: str = None
-    ):
-        """
-        Finds relevant chunks with optional hard metadata filters.
-        """
+        company: Optional[str] = None,
+        fy: Optional[str] = None,
+        quarter: Optional[str] = None
+    ) -> list[dict[str, Any]]:
+        """Finds relevant chunks with optional hard metadata filters."""
         formatted_embedding = f"[{','.join(map(str, query_embedding))}]"
 
         # Base Query
         query = """
-            SELECT 
+            SELECT
                 content, company, fy, quarter, page_number,
                 embedding <=> %s AS distance
             FROM transcript_chunks
             WHERE 1=1
         """
-        params = [formatted_embedding]
+        params: list[Any] = [formatted_embedding]
 
         # Dynamically add filters if they are provided
         if company:
@@ -119,11 +119,11 @@ class Database:
                     )
                 return results
 
-    def log_query(self, data: dict):
+    def log_query(self, data: dict[str, Any]) -> None:
         """Persists granular RAG telemetry to the database."""
         sql = """
-            INSERT INTO query_logs 
-            (question, refined_query, company_filter, fy_filter, quarter_filter, 
+            INSERT INTO query_logs
+            (question, refined_query, company_filter, fy_filter, quarter_filter,
              top_distance, processing_time_ms, retrieval_time_ms, synthesis_time_ms, response_time_ms)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
@@ -145,14 +145,16 @@ class Database:
                     )
                 conn.commit()
 
-    def get_system_stats(self) -> dict:
+    def get_system_stats(self) -> dict[str, Any]:
         """Fetches metrics including Median (P50) and P95 tail latencies."""
-        stats = {}
+        stats: dict[str, Any] = {}
         with self._get_connection() as conn:
             with conn.cursor() as cur:
                 # 1. Basic Counts
                 cur.execute("SELECT count(*) FROM transcript_chunks;")
-                stats['total_chunks'] = cur.fetchone()[0]
+                count_row = cur.fetchone()
+                assert count_row is not None
+                stats['total_chunks'] = count_row[0]
 
                 cur.execute(
                     "SELECT company, count(*) FROM transcript_chunks GROUP BY company ORDER BY count DESC;"
@@ -162,10 +164,10 @@ class Database:
                 # 2. Granular Performance Metrics (Last 24h)
                 cur.execute(
                     """
-                    SELECT 
+                    SELECT
                         count(*),
                         -- Averages
-                        AVG(processing_time_ms), AVG(retrieval_time_ms), 
+                        AVG(processing_time_ms), AVG(retrieval_time_ms),
                         AVG(synthesis_time_ms), AVG(response_time_ms),
                         -- P95 Latencies
                         PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY processing_time_ms),
@@ -175,11 +177,12 @@ class Database:
                         -- Distance Percentiles
                         PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY top_distance),
                         PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY top_distance)
-                    FROM query_logs 
+                    FROM query_logs
                     WHERE created_at > now() - interval '1 day';
                 """
                     )
                 row = cur.fetchone()
+                assert row is not None
 
                 stats['queries_24h'] = row[0] or 0
                 stats['latency'] = {
@@ -195,18 +198,16 @@ class Database:
     def search_hybrid_rrf(
             self,
             query_text: str,
-            query_embedding: list,
+            query_embedding: list[float],
             company: str,
-            fy: str = None,
-            quarter: str = None,
-            k_limit: int = 20,  # The candidate funnel size
-            weight_vec: float = 0.7,  # Importance of semantic search
-            weight_kw: float = 0.3,  # Importance of keyword search
-            final_limit: int = 5  # Chunks sent to the synthesizer
-    ) -> List[Dict]:
-        """
-        Performs Weighted Reciprocal Rank Fusion using dynamic parameters.
-        """
+            fy: Optional[str] = None,
+            quarter: Optional[str] = None,
+            k_limit: int = 20,
+            weight_vec: float = 0.7,
+            weight_kw: float = 0.3,
+            final_limit: int = 5
+    ) -> list[dict[str, Any]]:
+        """Performs Weighted Reciprocal Rank Fusion using dynamic parameters."""
         sql = """
         WITH vector_search AS (
             SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> %s::vector) as rank
@@ -226,11 +227,11 @@ class Database:
               AND fts_tokens @@ websearch_to_tsquery('english', %s)
             LIMIT %s
         )
-        SELECT 
+        SELECT
             c.content, c.company, c.fy, c.quarter, c.page_number,
             (v.id is not null) as found_by_vector,
             (k.id is not null) as found_by_keyword,
-            ((%s * COALESCE((1.0 / (60 + v.rank)), 0)) + 
+            ((%s * COALESCE((1.0 / (60 + v.rank)), 0)) +
              (%s * COALESCE((1.0 / (60 + k.rank)), 0))) as rrf_score
         FROM transcript_chunks c
         LEFT JOIN vector_search v ON c.id = v.id

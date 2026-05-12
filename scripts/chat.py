@@ -1,24 +1,34 @@
 import time
 import functools
-from typing import Any, Callable, Dict, List, Optional, TypeVar, cast
+from typing import Dict, List, Optional, Any, Callable, TypeVar, cast
+from dotenv import load_dotenv
+
+# Project Imports
 from verbatim.db import Database
 from verbatim.processor import QueryProcessor
 from verbatim.synthesizer import Synthesizer
+from verbatim.reranker import LLMReranker
 from scripts.ingest_data import get_embeddings
 
+# Load API Keys from .env
+load_dotenv()
+
+# Type variable for the decorator to preserve function signatures
 F = TypeVar('F', bound=Callable[..., Any])
 
 
 def track_latency(func: F) -> F:
-    """
-    Decorator that measures execution time in milliseconds
-    and stores it in the instance's 'latencies' dictionary.
-    """
+    """Decorator to record method execution time in milliseconds."""
 
     @functools.wraps(func)
     def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
         start_time = time.time()
         result = func(self, *args, **kwargs)
+
+        # Ensure latencies dict exists on the instance
+        if not hasattr(self, 'latencies'):
+            self.latencies = {}
+
         self.latencies[func.__name__] = int((time.time() - start_time) * 1000)
         return result
 
@@ -27,154 +37,153 @@ def track_latency(func: F) -> F:
 
 class ChatManager:
     # ---------------------------------------------------------
-    # Retrieval Configuration
+    # Configuration: The Funnel Strategy
     # ---------------------------------------------------------
-    K_LIMIT = 20
-    WEIGHT_VEC = 0.7
-    WEIGHT_KW = 0.3
-    FINAL_LIMIT = 5
+    CANDIDATE_POOL: int = 20  # Funnel Phase 1
+    FINAL_TOP_K: int = 5  # Funnel Phase 2
+
+    WEIGHT_VEC: float = 0.7
+    WEIGHT_KW: float = 0.3
 
     # ---------------------------------------------------------
 
     def __init__(self) -> None:
-        self.db = Database()
-        self.processor = QueryProcessor(self.db)
-        self.synthesizer = Synthesizer()
-        self.latencies: dict[str, int] = {}  # State storage for the decorator
-        self.search_stats: dict[str, int] = {}
+        self.db: Database = Database()
+        self.processor: QueryProcessor = QueryProcessor(self.db)
+        self.reranker: LLMReranker = LLMReranker()
+        self.synthesizer: Synthesizer = Synthesizer()
+        self.latencies: Dict[str, int] = {}
+        self.search_stats: Dict[str, int] = {}
 
     @track_latency
     def _extract(self, user_input: str) -> Optional[Dict[str, Any]]:
-        """Phase 1: Metadata extraction and query rewriting."""
-        extracted = self.processor.process_query(user_input)
+        """Phase 1: Metadata extraction and guardrails."""
+        extracted: Dict[str, Any] = self.processor.process_query(user_input)
 
-        # Validation Guardrails
-        if not extracted.get("company") or extracted["company"] == "null":
-            companies = ", ".join(self.db.get_unique_companies())
-            print(f"❌ Error: Please specify a company. Available: {companies}")
+        company: Optional[str] = extracted.get("company")
+        if not company or company == "null":
+            valid: str = ", ".join(self.db.get_unique_companies())
+            print(f"❌ Error: Specify a company. Options: {valid}")
             return None
 
         if extracted.get("quarter") and not extracted.get("fy"):
-            print("❌ Error: Financial Year (FY) is required when searching a specific Quarter.")
+            print("❌ Error: Please provide the Financial Year (FY) for that quarter.")
             return None
 
         return extracted
 
     @track_latency
     def _retrieve(self, extracted: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """
-        Executes hybrid search and calculates the retrieval signal distribution
-        (Overlap vs Vector-only vs Keyword-only).
-        """
-        search_query: str = cast(str, extracted.get("search_query", ""))
-        query_vector = get_embeddings([search_query])[0]
+        """Phase 2: Hybrid Retrieval (The 'Fast' Stage)."""
+        search_query: str = cast(str, extracted["search_query"])
+        # get_embeddings typically returns a list of lists
+        query_vector: List[float] = get_embeddings([search_query])[0]
 
-        chunks = self.db.search_hybrid_rrf(
+        candidates: List[Dict[str, Any]] = self.db.search_hybrid_rrf(
             query_text=search_query,
             query_embedding=query_vector,
-            company=extracted["company"],
+            company=cast(str, extracted["company"]),
             fy=extracted.get("fy"),
             quarter=extracted.get("quarter"),
-            k_limit=self.K_LIMIT,
+            k_limit=20,
             weight_vec=self.WEIGHT_VEC,
             weight_kw=self.WEIGHT_KW,
-            final_limit=self.FINAL_LIMIT
+            final_limit=self.CANDIDATE_POOL
         )
 
-        # Calculate Retrieval Stats
-        if chunks:
-            overlap = [c for c in chunks if c['found_by_vector'] and c['found_by_keyword']]
-            pure_v = [c for c in chunks if c['found_by_vector'] and not c['found_by_keyword']]
-            pure_k = [c for c in chunks if c['found_by_keyword'] and not c['found_by_vector']]
+        if candidates:
+            overlap = [c for c in candidates if
+                       c.get('found_by_vector') and c.get('found_by_keyword')]
+            pure_v = [c for c in candidates if
+                      c.get('found_by_vector') and not c.get('found_by_keyword')]
+            pure_k = [c for c in candidates if
+                      c.get('found_by_keyword') and not c.get('found_by_vector')]
 
             self.search_stats = {
-                "overlap_count": len(overlap),
-                "vector_signal": len(pure_v),
-                "keyword_signal": len(pure_k)
+                "overlap": len(overlap),
+                "vector_only": len(pure_v),
+                "keyword_only": len(pure_k)
             }
-        else:
-            self.search_stats = {"overlap_count": 0, "vector_signal": 0, "keyword_signal": 0}
 
-        return chunks
+        return candidates
+
+    @track_latency
+    def _rerank(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Phase 3: LLM Reranking (The 'Smart' Stage)."""
+        return self.reranker.rerank(query, candidates, top_n=self.FINAL_TOP_K)
 
     @track_latency
     def _synthesize(self, user_input: str, chunks: List[Dict[str, Any]]) -> str:
-        """Phase 3: Context-aware answer generation."""
+        """Phase 4: Final Synthesis."""
         return self.synthesizer.generate_answer(user_input, chunks)
 
-    def _log_interaction(self, question: str, extracted: Dict[str, Any], chunks: List[Dict[str, Any]]) -> None:
-        """Persists performance data and search mode distribution to the database."""
-        total_time = sum(self.latencies.values())
+    def _log_interaction(
+            self, question: str, extracted: Dict[str, Any], chunks: List[Dict[str, Any]]
+            ) -> None:
+        """Phase 5: Telemetry Persistence."""
+        total_time: int = sum(self.latencies.values())
 
-        # Pack the telemetry payload
-        telemetry: dict[str, Any] = {
+        # Safe extraction of the top score
+        top_score: Optional[float] = chunks[0].get('rrf_score') if chunks else None
+
+        telemetry: Dict[str, Any] = {
             "question": question,
             "refined_query": extracted.get("search_query"),
             "company_filter": extracted.get("company"),
             "fy_filter": extracted.get("fy"),
             "quarter_filter": extracted.get("quarter"),
-            "top_distance": chunks[0].get('rrf_score') if chunks else None,
-            # Timing (from @track_latency decorator)
+            "top_distance": top_score,
             "processing_time_ms": self.latencies.get('_extract', 0),
             "retrieval_time_ms": self.latencies.get('_retrieve', 0),
+            "rerank_time_ms": self.latencies.get('_rerank', 0),
             "synthesis_time_ms": self.latencies.get('_synthesize', 0),
             "response_time_ms": total_time,
-            # Search Distribution Signal
-            "search_overlap_count": self.search_stats.get("overlap_count", 0),
-            "vector_signal": self.search_stats.get("vector_signal", 0),
-            "keyword_signal": self.search_stats.get("keyword_signal", 0)
+            "search_overlap_count": self.search_stats.get("overlap", 0),
+            "vector_signal": self.search_stats.get("vector_only", 0),
+            "keyword_signal": self.search_stats.get("keyword_only", 0)
         }
-
-        # Save to Postgres
         self.db.log_query(telemetry)
 
     def _display_result(self, answer: str, extracted: Dict[str, Any]) -> None:
-        """Formats the final output for the console."""
-        metadata = f" {extracted['company']} | {extracted.get('fy', 'All Years')} "
-        print(f"\n{metadata.center(60, '=')}")
+        """Phase 5: UI Output."""
+        company: str = cast(str, extracted.get('company', 'Unknown'))
+        fy: str = cast(str, extracted.get('fy', 'All Time'))
+
+        print(f"\n{'=' * 15} VERBATIM RESPONSE {'=' * 15}")
+        print(f"Context: {company} | {fy}")
+        print("-" * 50)
         print(answer)
-        print("=" * 60 + "\n")
+        print(f"{'=' * 50}\n")
 
     def run_pipeline(self, user_input: str) -> None:
-        """Main orchestrator for the RAG pipeline flow."""
-        self.latencies = {}  # Clear latencies for the new request
+        """Main Orchestrator."""
+        self.latencies = {}
 
-        # 1. Extraction
         extracted = self._extract(user_input)
-        if not extracted:
+        if extracted is None:
             return
 
-        # 2. Retrieval
-        chunks = self._retrieve(extracted)
-        if not chunks:
-            print("⚠️ No relevant documents found for the given parameters.")
+        candidates = self._retrieve(extracted)
+        if not candidates:
+            print("⚠️ No relevant data found.")
             return
 
-        # 3. Synthesis
-        answer = self._synthesize(user_input, chunks)
+        refined_chunks = self._rerank(cast(str, extracted["search_query"]), candidates)
 
-        # 4. Telemetry & Display
-        self._log_interaction(user_input, extracted, chunks)
+        answer = self._synthesize(user_input, refined_chunks)
+
+        self._log_interaction(user_input, extracted, refined_chunks)
         self._display_result(answer, extracted)
 
 
-# --- Entry Point ---
-
-def main() -> None:
+if __name__ == "__main__":
     manager = ChatManager()
-    print("🏦 Verbatim Financial Intelligence Engine | 2026")
-    print("Type 'exit' to quit.\n")
-
     while True:
         try:
-            prompt = input("💬 Ask about a company: ").strip()
+            prompt: str = input("💬 Question: ").strip()
             if prompt.lower() in ['exit', 'quit']:
                 break
             if prompt:
                 manager.run_pipeline(prompt)
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, EOFError):
             break
-
-
-if __name__ == "__main__":
-    main()

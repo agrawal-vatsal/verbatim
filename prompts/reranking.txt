@@ -1,0 +1,12 @@
+I will provide you with a user query and a list of financial transcript chunks.
+Your task is to rank the chunks based on how relevant they are to the query.
+
+User Query: "{query}"
+
+Chunks:
+{chunks}
+
+Instructions:
+- Rank the chunks from most relevant to least relevant.
+- Return ONLY a JSON list of the integers representing the chunk indices.
+- Example Output: [4, 0, 12, 2, 7]

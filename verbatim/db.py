@@ -124,8 +124,11 @@ class Database:
         sql = """
             INSERT INTO query_logs
             (question, refined_query, company_filter, fy_filter, quarter_filter,
-             top_distance, processing_time_ms, retrieval_time_ms, synthesis_time_ms, response_time_ms)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             top_distance,
+             processing_time_ms, retrieval_time_ms, rerank_time_ms, synthesis_time_ms, response_time_ms,
+             search_overlap_count, vector_signal, keyword_signal,
+             pre_ce_chunk_ids, post_ce_chunk_ids)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         with self._get_connection() as conn:
             with conn.cursor() as cur:
@@ -139,10 +142,16 @@ class Database:
                         data.get('top_distance'),
                         data.get('processing_time_ms'),
                         data.get('retrieval_time_ms'),
+                        data.get('rerank_time_ms'),
                         data.get('synthesis_time_ms'),
-                        data.get('response_time_ms')
+                        data.get('response_time_ms'),
+                        data.get('search_overlap_count', 0),
+                        data.get('vector_signal', 0),
+                        data.get('keyword_signal', 0),
+                        data.get('pre_ce_chunk_ids'),
+                        data.get('post_ce_chunk_ids'),
                     )
-                    )
+                )
                 conn.commit()
 
     def get_system_stats(self) -> dict[str, Any]:
@@ -228,7 +237,7 @@ class Database:
             LIMIT %s
         )
         SELECT
-            c.content, c.company, c.fy, c.quarter, c.page_number,
+            c.id, c.content, c.company, c.fy, c.quarter, c.page_number,
             (v.id is not null) as found_by_vector,
             (k.id is not null) as found_by_keyword,
             ((%s * COALESCE((1.0 / (60 + v.rank)), 0)) +

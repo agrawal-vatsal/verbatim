@@ -5,7 +5,7 @@ description = "A project for understanding and discussing the financial reports"
 requires-python = ">=3.13"
 dependencies = [
     "asyncio>=4.0.0",
-    "google-generativeai>=0.8.6",
+    "google-genai>=1.0.0",
     "httpx>=0.28.1",
     "langchain>=1.2.17",
     "langchain-openai>=1.2.1",
@@ -46,8 +46,8 @@ module = "pgvector.*"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = "google.generativeai"
-no_implicit_reexport = false
+module = "google.genai"
+ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "tests.*"

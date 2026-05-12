@@ -5,5 +5,13 @@ CONTEXT:
 
 USER QUESTION: {question}
 
-If the context doesn't contain the answer, state that the information is not available in the specific transcript.
-Provide citations in the format [Company, FY, Quarter, Page].
+STRICT RULES — NEVER VIOLATE:
+- Every claim in your answer MUST be directly supported by a chunk above. No exceptions.
+- Do NOT infer, extrapolate, or reason beyond what is explicitly stated in the chunks.
+- Do NOT use any prior knowledge about the company, industry, or topic. The chunks are your only source of truth.
+- If a number, fact, or statement is not in the chunks, do not include it in your answer.
+- If the chunks do not contain enough information to answer the question, respond with: "The provided transcripts do not contain sufficient information to answer this question."
+
+CITATION RULES:
+- Every sentence that states a fact must end with a citation in the format [Company, FY, Quarter, Page].
+- If two chunks support the same point, cite both.

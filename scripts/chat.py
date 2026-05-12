@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from verbatim.db import Database
 from verbatim.processor import QueryProcessor
 from verbatim.synthesizer import Synthesizer
-from verbatim.reranker import LLMReranker
+from verbatim.reranker import LLMReranker, RerankerResult
 from scripts.ingest_data import get_embeddings
 
 # Load API Keys from .env
@@ -108,8 +108,8 @@ class ChatManager:
         return candidates
 
     @track_latency
-    def _rerank(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Phase 3: LLM Reranking (The 'Smart' Stage)."""
+    def _rerank(self, query: str, candidates: List[Dict[str, Any]]) -> RerankerResult:
+        """Phase 3: LLM + Cross-Encoder Reranking (The 'Smart' Stage)."""
         return self.reranker.rerank(query, candidates, top_n=self.FINAL_TOP_K)
 
     @track_latency
@@ -118,8 +118,13 @@ class ChatManager:
         return self.synthesizer.generate_answer(user_input, chunks)
 
     def _log_interaction(
-            self, question: str, extracted: Dict[str, Any], chunks: List[Dict[str, Any]]
-            ) -> None:
+            self,
+            question: str,
+            extracted: Dict[str, Any],
+            chunks: List[Dict[str, Any]],
+            pre_ce_ids: List[int],
+            post_ce_ids: List[int]
+        ) -> None:
         """Phase 5: Telemetry Persistence."""
         total_time: int = sum(self.latencies.values())
 
@@ -140,7 +145,9 @@ class ChatManager:
             "response_time_ms": total_time,
             "search_overlap_count": self.search_stats.get("overlap", 0),
             "vector_signal": self.search_stats.get("vector_only", 0),
-            "keyword_signal": self.search_stats.get("keyword_only", 0)
+            "keyword_signal": self.search_stats.get("keyword_only", 0),
+            "pre_ce_chunk_ids": pre_ce_ids,
+            "post_ce_chunk_ids": post_ce_ids,
         }
         self.db.log_query(telemetry)
 
@@ -168,11 +175,15 @@ class ChatManager:
             print("⚠️ No relevant data found.")
             return
 
-        refined_chunks = self._rerank(cast(str, extracted["search_query"]), candidates)
+        rerank_result: RerankerResult = self._rerank(cast(str, extracted["search_query"]), candidates)
+        refined_chunks = rerank_result["chunks"]
 
         answer = self._synthesize(user_input, refined_chunks)
 
-        self._log_interaction(user_input, extracted, refined_chunks)
+        self._log_interaction(
+            user_input, extracted, refined_chunks,
+            rerank_result["pre_ce_ids"], rerank_result["post_ce_ids"]
+        )
         self._display_result(answer, extracted)
 
 

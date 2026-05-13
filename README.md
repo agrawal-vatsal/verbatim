@@ -41,7 +41,7 @@ User Question
          │  5 precise chunks
          ▼
 ┌─────────────────┐
-│  4. Synthesis   │  GPT-4o generates a cited answer using only the
+│  4. Synthesis   │  GPT-4o-mini generates a cited answer using only the
 │                 │  retrieved chunks — no hallucination, strict citations
 └─────────────────┘
 ```

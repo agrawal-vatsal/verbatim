@@ -54,6 +54,7 @@ Every query is logged to the database with split-stage latencies, retrieval sign
 |---|---|
 | Database | PostgreSQL 16 + pgvector |
 | Embeddings | OpenAI `text-embedding-3-small` (1536-dim) |
+| Orchestration | LangChain LCEL (`|` chain with `RunnableLambda`) |
 | Query extraction | OpenAI GPT-4o-mini via LangChain |
 | Reranking | Google Gemini 2.5 Flash Lite |
 | Synthesis | OpenAI GPT-4o |
@@ -180,7 +181,7 @@ uv run python -m scripts.stats
    🧠 Processing   |        320ms |        480ms
    🔍 Retrieval    |         85ms |        130ms
    🔀 Reranking    |        410ms |        680ms
-   ✍️  Synthesis    |       1840ms |       2500ms
+   ✍️ Synthesis    |       1840ms |       2500ms
    ---------------------------------------------
    🚀 TOTAL E2E    |       2655ms |       3790ms
 
@@ -215,7 +216,8 @@ verbatim/
 │   ├── db.py               # Database layer (PostgreSQL + pgvector)
 │   ├── processor.py        # Query extraction (GPT-4o-mini via LangChain)
 │   ├── reranker.py         # LLM reranker (Gemini RankGPT) + displacement metric
-│   └── synthesizer.py      # Answer synthesis (GPT-4o)
+│   ├── synthesizer.py      # Answer synthesis (GPT-4o)
+│   └── utils.py            # Pipeline utilities (PipelineState, runnable_step, track_latency)
 │
 ├── scripts/
 │   ├── chat.py             # Main CLI — ChatManager orchestrator

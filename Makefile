@@ -1,12 +1,12 @@
 .DEFAULT_GOAL := help
-.PHONY: help install sync test coverage typecheck lint fix format check \
+.PHONY: help install sync test test-integration coverage typecheck lint fix format check \
         db-up db-down db-init db-check stats chat download ingest clean \
         eval eval-extraction eval-reranking eval-synthesis eval-pipeline
 
 RUN := uv run
 
 help: ## List available commands
-	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-17s\033[0m %s\n", $$1, $$2}'
 
 # --- Setup -------------------------------------------------------------------
 
@@ -21,6 +21,10 @@ sync: ## Sync the env with pyproject.toml (updates uv.lock if needed)
 
 test: ## Run the offline test suite with coverage (fails under 90%)
 	$(RUN) pytest --cov
+
+test-integration: ## DB tests against TEST_DATABASE_URL (a throwaway DB; tests write to it)
+	@test -n "$$TEST_DATABASE_URL" || { echo "Set TEST_DATABASE_URL to a throwaway Postgres + pgvector database."; exit 1; }
+	$(RUN) pytest tests/test_db_integration.py -v
 
 coverage: ## HTML coverage report in htmlcov/
 	$(RUN) pytest --cov --cov-report=html

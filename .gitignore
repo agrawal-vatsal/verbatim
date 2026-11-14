@@ -28,10 +28,16 @@ evals/results/*
 .code-review-graph/
 
 .ai/
-.claude/
+.claude/*
+# Project skills are shared; everything else in .claude/ (settings, hooks) stays local.
+!.claude/skills/
 .mcp.json
 CLAUDE.md
 .pre-commit-config.yaml
 # Coverage
 .coverage
 htmlcov/
+
+# Generated artifacts (Archify diagrams, artifact pages)
+.archify/
+.artifacts/

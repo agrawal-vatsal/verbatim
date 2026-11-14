@@ -40,6 +40,8 @@ Facts to trace in the code (re-read the code first; it is the source of truth, n
 - Storage: Postgres 16 + pgvector (`docker-compose.yaml`, port 5433), tables `transcript_chunks` and `query_logs`
 - External services: OpenAI (embeddings `text-embedding-3-small`, chat `gpt-4o-mini`) and Google Gemini
 
+Before sharing an Archify diagram, look at it: run `node ~/.claude/skills/archify/bin/archify.mjs visual-check <html> --summary --require-provenance --out-dir <folder>/visual-check` and read one screenshot. Passing gates prove the layout is valid, not that it reads well. Node `tag`s are easy to miss at desktop zoom, so put behavior-changing conditions (early stops, fallbacks) in a card as well.
+
 Report what the diagram leaves out (for example evals, CI or the CLI scripts) when a reader might expect it.
 
 **Archify not available.** Load the `artifact-diagramming` skill and draw the diagram as inline SVG in a page built as in section 3. Say in your reply that Archify wasn't used. Don't install Archify or Node yourself; offer it instead (`npx skills add https://archify.si --skill archify --agent claude-code --global --copy` needs Node).
@@ -54,7 +56,7 @@ Load the `artifact-design` skill before writing the page, and `dataviz` before a
 ## 4. Publish
 
 Use the Artifact tool when it is available:
-- An Archify diagram is already a finished standalone page. Read the whole generated HTML before publishing it, then publish that file with a short `description` and `icon` `diagram`. Don't rewrite Archify's HTML.
+- An Archify diagram is already a finished standalone page. Read the whole generated HTML before publishing it, then publish that file with a short `description` and `icon` `diagram`. Don't rewrite Archify's HTML. These pages are large (about 0.9 MB, mostly Archify's inline viewer script), so the read is costly: first give the user the local file, then ask whether to publish. Before reading, confirm the page is self-contained (no `<script src>`, no `fetch`/XHR/WebSocket) and that every embedded `data:` URI is a font.
 - A page from section 3: publish `.artifacts/<slug>.html` with an `icon` such as `chart` or `report`.
 - To update an artifact made earlier in the conversation, publish the same file path again so it keeps its URL.
 

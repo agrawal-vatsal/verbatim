@@ -1,7 +1,8 @@
 import json
-import httpx
 import time
 from pathlib import Path
+
+import httpx
 
 
 def download_transcripts() -> None:

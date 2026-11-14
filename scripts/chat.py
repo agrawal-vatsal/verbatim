@@ -1,14 +1,16 @@
-import time
 import functools
-from typing import Dict, List, Optional, Any, Callable, TypeVar, cast
+import time
+from typing import Any, Callable, Dict, List, Optional, TypeVar, cast
+
 from dotenv import load_dotenv
+
+from scripts.ingest_data import get_embeddings
 
 # Project Imports
 from verbatim.db import Database
 from verbatim.processor import QueryProcessor
-from verbatim.synthesizer import Synthesizer
 from verbatim.reranker import LLMReranker, RerankerResult
-from scripts.ingest_data import get_embeddings
+from verbatim.synthesizer import Synthesizer
 
 # Load API Keys from .env
 load_dotenv()

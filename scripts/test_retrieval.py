@@ -1,6 +1,7 @@
-from verbatim.db import Database
-from scripts.ingest_data import get_embeddings
 import sys
+
+from scripts.ingest_data import get_embeddings
+from verbatim.db import Database
 
 
 def ask_verbatim(question: str) -> None:

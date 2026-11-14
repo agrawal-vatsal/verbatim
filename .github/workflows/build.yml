@@ -1,0 +1,73 @@
+name: Build
+
+# Build and integration checks on every push: the package builds, the lockfile is in sync,
+# the compose file is valid, and the DB layer works against a real Postgres + pgvector.
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Package and lockfile
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3  # no floating major tag upstream
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - name: uv.lock matches pyproject.toml
+        run: uv lock --check
+      - name: Build sdist and wheel
+        run: uv build
+      - name: Wheel contains the verbatim package
+        run: unzip -l dist/*.whl | grep -q "verbatim/db.py"
+      - name: docker-compose.yaml is valid
+        run: docker compose config --quiet
+
+  database:
+    name: Migrations and DB integration (pgvector)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        # Same image as docker-compose.yaml
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: user
+          POSTGRES_DB: verbatim
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U user -d verbatim"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # A throwaway database that exists only for this job.
+      DATABASE_URL: postgresql://user:user@localhost:5432/verbatim
+      TEST_DATABASE_URL: postgresql://user:user@localhost:5432/verbatim
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3  # no floating major tag upstream
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Connect
+        run: make db-check
+      - name: Enable pgvector and apply migrations
+        run: make db-init
+      - name: Migrations are safe to re-run
+        run: uv run python -m scripts.migrate
+      - name: DB integration tests
+        run: make test-integration

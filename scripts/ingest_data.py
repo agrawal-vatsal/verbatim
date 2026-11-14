@@ -1,9 +1,8 @@
 import os
+from pathlib import Path
+from typing import Any, Dict, List
 
 import pdfplumber
-from pathlib import Path
-from typing import Any, List, Dict
-
 from dotenv import load_dotenv
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from openai import OpenAI

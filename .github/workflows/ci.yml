@@ -1,0 +1,62 @@
+name: CI
+
+# Lint, typecheck and offline tests on every push. No secrets needed: the tests never
+# call real APIs or a real database.
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3  # no floating major tag upstream
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: make lint
+
+  typecheck:
+    name: Typecheck (mypy strict)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3  # no floating major tag upstream
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: make typecheck
+
+  test:
+    name: Tests (90% coverage floor)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3  # no floating major tag upstream
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --locked
+      # Same as `make test`, plus an HTML report to download from the run page.
+      - run: uv run pytest --cov --cov-report=term-missing --cov-report=html
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: coverage-html
+          path: htmlcov/
+          retention-days: 14
+          if-no-files-found: ignore

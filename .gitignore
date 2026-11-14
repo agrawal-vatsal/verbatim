@@ -32,3 +32,6 @@ evals/results/*
 .mcp.json
 CLAUDE.md
 .pre-commit-config.yaml
+# Coverage
+.coverage
+htmlcov/

@@ -1,7 +1,7 @@
-import os
 from pathlib import Path
+
+from scripts.ingest_data import get_chunks_from_pdf, get_embeddings, parse_metadata
 from verbatim.db import Database
-from scripts.ingest_data import parse_metadata, get_chunks_from_pdf, get_embeddings
 
 
 def ingest_all_transcripts(directory_path: str) -> None:

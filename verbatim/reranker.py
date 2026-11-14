@@ -1,7 +1,7 @@
 import json
 import os
 from pathlib import Path
-from typing import List, Dict, Any, TypedDict
+from typing import Any, Dict, List, TypedDict
 
 from google import genai
 from google.genai import types
@@ -24,7 +24,7 @@ def _weighted_displacement(positions: List[int], n: int, k: int) -> float:
     d = k * (k + 1) / 2                              # sum of weights: K + (K-1) + ... + 1
     weights = [(k - j) / d for j in range(k)]        # LLM pos 0 → highest weight
 
-    weighted_mean = sum(w * r for w, r in zip(weights, positions))
+    weighted_mean = sum(w * r for w, r in zip(weights, positions, strict=False))
     min_wm = sum(weights[j] * j for j in range(k))              # top-K in RRF order
     max_wm = sum(weights[j] * (n - 1 - j) for j in range(k))   # bottom-K, most displaced first
 

@@ -1,8 +1,9 @@
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
+
 from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
 
 if TYPE_CHECKING:
     from verbatim.db import Database

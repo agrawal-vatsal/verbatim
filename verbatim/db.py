@@ -1,6 +1,7 @@
 import os
+from typing import Any, Optional
+
 import psycopg
-from typing import Any, Optional, cast
 from dotenv import load_dotenv
 from pgvector.psycopg import register_vector
 from psycopg.rows import dict_row
@@ -34,7 +35,7 @@ class Database:
                         # MANUALLY FORMAT: Convert list [0.1, 0.2] -> string "[0.1,0.2]"
                         f"[{','.join(map(str, emb))}]"
                     )
-                    for c, emb in zip(chunks, embeddings)
+                    for c, emb in zip(chunks, embeddings, strict=False)
                 ]
 
                 with cur.copy(

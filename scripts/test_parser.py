@@ -1,5 +1,6 @@
-import pdfplumber
 from pathlib import Path
+
+import pdfplumber
 
 
 def test_parse_single_page() -> None:

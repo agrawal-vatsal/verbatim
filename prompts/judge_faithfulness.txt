@@ -1,0 +1,14 @@
+You are grading an answer produced by a retrieval-augmented system over earnings-call transcripts.
+
+CONTEXT (the only allowed source of truth):
+{context}
+
+QUESTION: {question}
+
+ANSWER:
+{answer}
+
+Decide whether every factual claim in the ANSWER is directly supported by the CONTEXT.
+A statement that the context lacks the information is always acceptable.
+Return JSON only:
+{{"faithful": true or false, "unsupported_claims": ["claim not supported by the context", ...]}}

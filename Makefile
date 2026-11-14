@@ -1,6 +1,7 @@
 .DEFAULT_GOAL := help
-.PHONY: help install sync test typecheck lint fix format check \
-        db-up db-down db-init db-check stats chat download ingest clean
+.PHONY: help install sync test coverage typecheck lint fix format check \
+        db-up db-down db-init db-check stats chat download ingest clean \
+        eval eval-extraction eval-reranking eval-synthesis eval-pipeline
 
 RUN := uv run
 
@@ -18,8 +19,12 @@ sync: ## Sync the env with pyproject.toml (updates uv.lock if needed)
 
 # --- Quality -----------------------------------------------------------------
 
-test: ## Run the offline test suite
-	$(RUN) pytest
+test: ## Run the offline test suite with coverage (fails under 90%)
+	$(RUN) pytest --cov
+
+coverage: ## HTML coverage report in htmlcov/
+	$(RUN) pytest --cov --cov-report=html
+	@echo "Open htmlcov/index.html"
 
 typecheck: ## Type-check with mypy (strict)
 	$(RUN) mypy .
@@ -64,6 +69,22 @@ download: ## Download transcripts listed in manifest.json
 ingest: ## Embed and load downloaded PDFs (paid: OpenAI)
 	$(RUN) python -m scripts.ingest_all
 
+# --- Evals (real, paid LLM calls; never part of `check`) ----------------------
+
+eval: eval-extraction eval-reranking eval-synthesis ## Run all component evals (paid: OpenAI + Gemini)
+
+eval-extraction: ## Eval query extraction (paid: OpenAI)
+	$(RUN) python -m evals.extraction
+
+eval-reranking: ## Eval the Gemini reranker (paid: Gemini)
+	$(RUN) python -m evals.reranking
+
+eval-synthesis: ## Eval cited answer synthesis (paid: OpenAI)
+	$(RUN) python -m evals.synthesis
+
+eval-pipeline: ## End-to-end eval against the DB (paid; needs db-up + ingested data)
+	$(RUN) python -m evals.pipeline
+
 clean: ## Remove tool caches
-	rm -rf .mypy_cache .pytest_cache .ruff_cache
+	rm -rf .mypy_cache .pytest_cache .ruff_cache .coverage htmlcov
 	find . -type d -name __pycache__ -not -path './.venv/*' -prune -exec rm -rf {} +

@@ -10,6 +10,7 @@ dependencies = [
     "langchain>=1.2.17",
     "langchain-openai>=1.2.1",
     "langchain-text-splitters>=1.1.2",
+    "langgraph>=1.1.10",
     "openai>=2.36.0",
     "pdfplumber>=0.11.9",
     "pgvector>=0.4.2",

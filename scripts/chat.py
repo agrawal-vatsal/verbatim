@@ -8,6 +8,7 @@ from scripts.ingest_data import get_embeddings
 
 # Project Imports
 from verbatim.db import Database
+from verbatim.graph import PipelineState, build_pipeline_graph, run_graph
 from verbatim.processor import QueryProcessor
 from verbatim.reranker import LLMReranker, RerankerResult
 from verbatim.synthesizer import Synthesizer
@@ -56,6 +57,13 @@ class ChatManager:
         self.synthesizer: Synthesizer = Synthesizer()
         self.latencies: Dict[str, int] = {}
         self.search_stats: Dict[str, int] = {}
+        self.graph = build_pipeline_graph(
+            extract=self._extract,
+            retrieve=self._retrieve,
+            rerank=self._rerank,
+            synthesize=self._synthesize,
+            log=self._log_interaction,
+        )
 
     @track_latency
     def _extract(self, user_input: str) -> Optional[Dict[str, Any]]:
@@ -169,30 +177,18 @@ class ChatManager:
         print(answer)
         print(f"{'=' * 50}\n")
 
-    def run_pipeline(self, user_input: str) -> None:
-        """Main Orchestrator."""
+    def run_pipeline(self, user_input: str) -> PipelineState:
+        """Main Orchestrator: runs the LangGraph pipeline (verbatim/graph.py) and shows the result."""
         self.latencies = {}
 
-        extracted = self._extract(user_input)
-        if extracted is None:
-            return
+        state = run_graph(self.graph, user_input)
 
-        candidates = self._retrieve(extracted)
-        if not candidates:
+        if state.get("stopped_at") == "retrieve":
             print("⚠️ No relevant data found.")
-            return
-
-        rerank_result: RerankerResult = self._rerank(cast(str, extracted["search_query"]), candidates)
-        refined_chunks = rerank_result["chunks"]
-
-        answer = self._synthesize(user_input, refined_chunks)
-
-        self._log_interaction(
-            user_input, extracted, refined_chunks,
-            rerank_result["pre_ce_ids"], rerank_result["post_ce_ids"],
-            rerank_result["displacement_score"],
-        )
-        self._display_result(answer, extracted)
+        extracted = state.get("extracted")
+        if "answer" in state and extracted is not None:
+            self._display_result(state["answer"], extracted)
+        return state
 
 
 if __name__ == "__main__":

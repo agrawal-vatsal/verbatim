@@ -48,10 +48,29 @@ User Question
 
 Every query is logged to the database with split-stage latencies, retrieval signal breakdown (vector-only / keyword-only / overlap), and a **reranker displacement score** that measures how much the LLM reranker promoted lower-ranked chunks.
 
+### Orchestration (LangGraph)
+
+The stages run as a [LangGraph](https://langchain-ai.github.io/langgraph/) `StateGraph` (`verbatim/graph.py`). Each stage is a node, and two conditional edges end the run early: when extraction rejects the question (no known company, or a quarter without an FY) and when retrieval finds nothing. The individual LLM calls inside the nodes still use LangChain.
+
+```mermaid
+graph TD
+    START([start]) --> extract
+    extract -. no valid company / quarter without FY .-> END([end])
+    extract -.-> retrieve
+    retrieve -. no candidates .-> END
+    retrieve -.-> rerank
+    rerank --> synthesize
+    synthesize --> log
+    log --> END
+```
+
+`ChatManager.run_pipeline` (in `scripts/chat.py`) invokes the graph and returns its final state: `extracted`, `candidates`, `rerank`, `answer`, and `stopped_at` when the run ended early.
+
 ## Tech stack
 
 | Component | Technology |
 |---|---|
+| Pipeline orchestration | LangGraph `StateGraph` |
 | Database | PostgreSQL 16 + pgvector |
 | Embeddings | OpenAI `text-embedding-3-small` (1536-dim) |
 | Query extraction | OpenAI GPT-4o-mini via LangChain |
@@ -213,6 +232,7 @@ uv run python -m scripts.stats
 verbatim/
 ├── verbatim/               # Core library
 │   ├── db.py               # Database layer (PostgreSQL + pgvector)
+│   ├── graph.py            # Query pipeline as a LangGraph StateGraph
 │   ├── processor.py        # Query extraction (GPT-4o-mini via LangChain)
 │   ├── reranker.py         # LLM reranker (Gemini RankGPT) + displacement metric
 │   └── synthesizer.py      # Answer synthesis (GPT-4o)

@@ -172,8 +172,25 @@ def test_run_pipeline_happy_path(fakes: Fakes, capsys: pytest.CaptureFixture[str
 
 def test_run_pipeline_stops_when_extraction_fails(fakes: Fakes) -> None:
     fakes.extracted = {"company": None}
-    chat.ChatManager().run_pipeline("q")
+    state = chat.ChatManager().run_pipeline("q")
     assert fakes.search_calls == [] and fakes.synth_calls == [] and fakes.logged == []
+    assert state["stopped_at"] == "extract"
+
+
+def test_run_pipeline_returns_final_graph_state(fakes: Fakes) -> None:
+    state = chat.ChatManager().run_pipeline("What about NIM?")
+    assert state["answer"] == "the answer"
+    assert state["extracted"] == EXTRACTED
+    assert state["rerank"]["displacement_score"] == 0.42
+    assert "stopped_at" not in state
+
+
+def test_run_pipeline_resets_latencies_between_questions(fakes: Fakes) -> None:
+    manager = chat.ChatManager()
+    manager.run_pipeline("first")
+    fakes.extracted = {"company": None}
+    manager.run_pipeline("second")
+    assert set(manager.latencies) == {"_extract"}
 
 
 def test_run_pipeline_stops_when_nothing_retrieved(fakes: Fakes, capsys: pytest.CaptureFixture[str]) -> None:
